@@ -1,0 +1,33 @@
+﻿# ===========================
+# Large dataset files (>100MB)
+# ===========================
+# Raw sales CSVs (~500-655 MB each)
+dataset/raw/sales/*.csv
+
+# Combined sales file (~2.3 GB)
+dataset/combined/fact_sales_combined.csv
+
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# ===========================
+# IDE / Editor
+# ===========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

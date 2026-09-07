@@ -1,0 +1,2 @@
+product_master_file,product_master_unique_ids,expected_sales_files,sales_files_found,sales_files_missing,sales_rows_found,unique_products_across_files_sum,overall_product_id_match_rate,overall_date_min,overall_date_max,total_quantity,gross_sales_value_estimate,total_discount,net_sales_estimate
+dim_product.csv,32226,8,7,1,46706387,83863,0.9886070827957641,2022-04-01,2022-07-10,60176096.0,4725948522.0,29431020.338,4696517501.662
