@@ -1,4 +1,4 @@
-﻿# ===========================
+# ===========================
 # Large dataset files (>100MB)
 # ===========================
 # Raw sales CSVs (~500-655 MB each)
@@ -22,8 +22,19 @@ venv/
 env/
 
 # ===========================
+# Frontend & Node
+# ===========================
+node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+.env
+.env*.local
+
+# ===========================
 # IDE / Editor
 # ===========================
+
 .vscode/
 .idea/
 *.swp
