@@ -40,6 +40,8 @@ def get_sku_explainability_trace(
     """
     target_dataset = resolve_dataset(db, None, dataset_id)
     pid = str(product_id)
+    prod = db.query(Product).filter(Product.product_id == pid).first()
+    product_name = prod.product_name if prod else f"Product #{pid}"
 
     # 1. Fetch Demand Records
     query = db.query(DailyProductDemand).filter(
@@ -66,7 +68,7 @@ def get_sku_explainability_trace(
 
     # If still no records, synthesize a realistic trace for preview
     if not records:
-        return _generate_fallback_explainability_trace(pid, target_dataset.id)
+        return _generate_fallback_explainability_trace(pid, target_dataset.id, product_name=product_name)
 
     quantities = [float(r.total_quantity or 0.0) for r in records]
     n_obs = len(quantities)
@@ -167,7 +169,15 @@ def get_sku_explainability_trace(
     }
 
     # 3. MODEL SELECTION TOURNAMENT
-    selected_model_name, fallback_reason, conf_tier = select_model(quantities)
+    res_model = select_model(quantities)
+    if isinstance(res_model, (tuple, list)):
+        selected_model_name = res_model[0]
+        fallback_reason = res_model[1] if len(res_model) > 1 else None
+        conf_tier = res_model[2] if len(res_model) > 2 else "MEDIUM"
+    else:
+        selected_model_name = str(res_model)
+        fallback_reason = None
+        conf_tier = "HIGH" if n_obs >= 60 else "MEDIUM"
 
     candidates = [
         {
@@ -389,6 +399,7 @@ def get_sku_explainability_trace(
     return {
         "status": "success",
         "product_id": pid,
+        "product_name": product_name,
         "dataset_id": target_dataset.id,
         "as_of": end_date.isoformat(),
         "data": data_section,
@@ -400,11 +411,12 @@ def get_sku_explainability_trace(
     }
 
 
-def _generate_fallback_explainability_trace(product_id: str, dataset_id: int) -> Dict[str, Any]:
+def _generate_fallback_explainability_trace(product_id: str, dataset_id: int, product_name: Optional[str] = None) -> Dict[str, Any]:
     """Generates a demo explainability trace when no historical records exist."""
     return {
         "status": "success",
         "product_id": product_id,
+        "product_name": product_name or f"Product #{product_id}",
         "dataset_id": dataset_id,
         "as_of": date.today().isoformat(),
         "data": {

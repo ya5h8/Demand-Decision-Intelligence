@@ -48,6 +48,10 @@ def resolve_dataset(
                 Dataset.is_active == True
             ).first()
             if not dataset:
+                dataset = db.query(Dataset).filter(
+                    Dataset.is_active == True
+                ).order_by(Dataset.is_default_upload_target.desc(), Dataset.id.desc()).first()
+            if not dataset:
                 raise HTTPException(status_code=404, detail=f"Dataset with id {dataset_id} not found or inactive.")
             dataset.is_demo = bool(dataset.name == "Demo Data" or dataset.source == "seed")
             return dataset

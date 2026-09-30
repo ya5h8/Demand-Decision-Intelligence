@@ -16,6 +16,7 @@ from backend.models.user import User
 from backend.models.recommendation import ActionRecommendation, RecommendationEvent
 from backend.models.inventory import LeadTimeObservation, InventoryRecommendation
 from backend.services.inventory_service import get_lead_time_stats, compute_safety_stock_kings, compute_safety_stock_classical
+from backend.services.dataset_service import resolve_dataset
 from backend.services.recommendation_lifecycle import (
     transition_recommendation_status,
     compute_forecast_accountability_scorecard,
@@ -32,24 +33,27 @@ class TransitionRequest(BaseModel):
 
 @router.get("")
 def list_recommendations(
-    dataset_id: Optional[int] = 1,
+    dataset_id: Optional[int] = None,
     status_filter: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_or_guest),
 ):
     """Lists all active actionable recommendations across products."""
+    target_ds = resolve_dataset(db, current_user, dataset_id)
+    eff_dataset_id = target_ds.id if target_ds else 1
+
     query = db.query(ActionRecommendation)
-    if dataset_id:
-        query = query.filter(ActionRecommendation.dataset_id == dataset_id)
+    if eff_dataset_id:
+        query = query.filter(ActionRecommendation.dataset_id == eff_dataset_id)
     if status_filter:
         query = query.filter(ActionRecommendation.status == status_filter.upper())
 
     recs = query.order_by(ActionRecommendation.created_at.desc()).limit(100).all()
 
     # If table is currently empty, dynamically seed from inventory recommendations
-    if not recs and dataset_id:
+    if not recs and eff_dataset_id:
         invs = db.query(InventoryRecommendation).filter(
-            InventoryRecommendation.dataset_id == dataset_id,
+            InventoryRecommendation.dataset_id == eff_dataset_id,
             InventoryRecommendation.current_stock < InventoryRecommendation.reorder_point
         ).limit(10).all()
 
@@ -117,7 +121,7 @@ def update_recommendation_state(
 
 @router.get("/lead-time-reality-check")
 def get_lead_time_reality_check(
-    dataset_id: int = 1,
+    dataset_id: Optional[int] = None,
     product_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_or_guest),
@@ -126,7 +130,9 @@ def get_lead_time_reality_check(
     THE LEARNING LOOP: Compares promised lead times vs actual observed receipt durations,
     illustrating the dynamic calibration of King's safety stock.
     """
-    query = db.query(LeadTimeObservation).filter(LeadTimeObservation.dataset_id == dataset_id)
+    target_ds = resolve_dataset(db, current_user, dataset_id)
+    eff_dataset_id = target_ds.id if target_ds else 1
+    query = db.query(LeadTimeObservation).filter(LeadTimeObservation.dataset_id == eff_dataset_id)
     if product_id:
         query = query.filter(LeadTimeObservation.product_id == product_id)
 
@@ -208,10 +214,12 @@ def get_lead_time_reality_check(
 
 @router.get("/forecast-scorecard")
 def get_forecast_scorecard(
-    dataset_id: int = 1,
+    dataset_id: Optional[int] = None,
     lookback_days: int = 60,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_or_guest),
 ):
     """FORECAST ACCOUNTABILITY: Returns running WAPE, MAPE, and historical error audit."""
-    return compute_forecast_accountability_scorecard(dataset_id=dataset_id, db=db, lookback_days=lookback_days)
+    target_ds = resolve_dataset(db, current_user, dataset_id)
+    eff_dataset_id = target_ds.id if target_ds else 1
+    return compute_forecast_accountability_scorecard(dataset_id=eff_dataset_id, db=db, lookback_days=lookback_days)

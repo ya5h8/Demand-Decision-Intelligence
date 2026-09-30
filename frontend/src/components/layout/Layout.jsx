@@ -23,7 +23,6 @@ const titleMap = {
   '/recommendations': 'Action Recommendations',
   '/transfers': 'Inter-City Stock Transfers',
   '/quality': 'Data Quality Scorecard',
-  '/model-performance': 'Model Performance Leaderboard',
 };
 
 export default function Layout() {

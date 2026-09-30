@@ -24,7 +24,6 @@ import WhatIfSimulatorPage from './pages/simulator/WhatIfSimulatorPage';
 import AssistantPage from './pages/assistant/AssistantPage';
 import SkuDetailPage from './pages/inventory/SkuDetailPage';
 import DataQualityScorecardPage from './pages/quality/DataQualityScorecardPage';
-import ModelPerformancePage from './pages/forecast/ModelPerformancePage';
 import GenericPage from './pages/common/GenericPage';
 import './styles/main.css';
 
@@ -62,7 +61,7 @@ export default function App() {
             {/* Detailed Feature Routes */}
             <Route path="/sku/:productId" element={<SkuDetailPage />} />
             <Route path="/quality" element={<DataQualityScorecardPage />} />
-            <Route path="/model-performance" element={<ModelPerformancePage />} />
+            <Route path="/model-performance" element={<Navigate to="/forecast" replace />} />
             <Route path="/procurement" element={<Navigate to="/purchase-orders" replace />} />
             <Route path="/classification" element={<Navigate to="/abc-xyz" replace />} />
             <Route path="/assistant" element={<AssistantPage />} />

@@ -23,6 +23,7 @@ import {
   EmptyState,
 } from '../../components/ui';
 import { UpdateLeadTimeModal } from '../forecast/components/UpdateLeadTimeModal';
+import { getProductName } from '../../utils/productNames';
 
 export default function PurchaseOrdersPage() {
   const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'catalog'
@@ -44,7 +45,7 @@ export default function PurchaseOrdersPage() {
   const fetchPOs = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/purchase-orders?dataset_id=1');
+      const res = await fetch('/api/purchase-orders');
       if (res.ok) {
         const data = await res.json();
         setPurchaseOrders(data.purchase_orders || []);
@@ -59,7 +60,7 @@ export default function PurchaseOrdersPage() {
   const fetchCatalog = async () => {
     setCatalogLoading(true);
     try {
-      const res = await fetch('/api/purchase-orders/catalog-lead-times?dataset_id=1');
+      const res = await fetch('/api/purchase-orders/catalog-lead-times');
       if (res.ok) {
         const data = await res.json();
         setCatalog(data.catalog || []);
@@ -88,7 +89,7 @@ export default function PurchaseOrdersPage() {
       const res = await fetch('/api/purchase-orders/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataset_id: 1 })
+        body: JSON.stringify({})
       });
       if (res.ok) {
         const data = await res.json();
@@ -259,8 +260,7 @@ export default function PurchaseOrdersPage() {
                   <thead>
                     <tr style={{ borderBottom: '2px solid var(--border-subtle, #e2e8f0)', color: 'var(--text-muted)' }}>
                       <th style={{ padding: '10px 14px', fontWeight: 600 }}>SKU / Product</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 600 }}>Supplier</th>
-                      <th style={{ padding: '10px 14px', fontWeight: 600 }}>Turnaround (Lead Time)</th>
+                      <th style={{ padding: '10px 14px', fontWeight: 600 }}>Delivery Turnaround</th>
                       <th style={{ padding: '10px 14px', fontWeight: 600 }}>Warehouse Stock</th>
                       <th style={{ padding: '10px 14px', fontWeight: 600 }}>Status</th>
                       <th style={{ padding: '10px 14px', fontWeight: 600, textAlign: 'right' }}>Action</th>
@@ -268,15 +268,12 @@ export default function PurchaseOrdersPage() {
                   </thead>
                   <tbody>
                     {catalog
-                      .filter(c => !catalogSearch || c.product_name.toLowerCase().includes(catalogSearch.toLowerCase()) || c.product_id.toLowerCase().includes(catalogSearch.toLowerCase()) || (c.supplier_name && c.supplier_name.toLowerCase().includes(catalogSearch.toLowerCase())))
+                      .filter(c => !catalogSearch || c.product_name.toLowerCase().includes(catalogSearch.toLowerCase()) || c.product_id.toLowerCase().includes(catalogSearch.toLowerCase()))
                       .map((item) => (
                         <tr key={item.product_id} style={{ borderBottom: '1px solid var(--border-subtle, #f1f5f9)' }}>
                           <td style={{ padding: '12px 14px' }}>
                             <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.product_name}</div>
                             <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{item.product_id} · {item.category}</div>
-                          </td>
-                          <td style={{ padding: '12px 14px', color: 'var(--text-secondary)' }}>
-                            {item.supplier_name}
                           </td>
                           <td style={{ padding: '12px 14px' }}>
                             <span style={{
@@ -353,18 +350,18 @@ export default function PurchaseOrdersPage() {
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: '15px', fontWeight: 700 }}>{po.po_number}</span>
                       <StatusBadge variant={sc.variant} label={sc.label} size="sm" />
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                      <span>Supplier: <strong style={{ color: 'var(--text-primary)' }}>{po.supplier_name}</strong></span>
-                      <span>Created: {po.created_at ? new Date(po.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</span>
-                      <span>Expected: {po.expected_delivery_date ? new Date(po.expected_delivery_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'Standard'}</span>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                      <span>Order Date: <strong style={{ color: 'var(--text-primary)' }}>{po.created_at ? new Date(po.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</strong></span>
+                      <span>Expected Delivery: <strong style={{ color: 'var(--text-primary)' }}>{po.expected_delivery_date ? new Date(po.expected_delivery_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Standard (7 Days)'}</strong></span>
+                      <span>Total Items: <strong style={{ color: 'var(--accent-primary)' }}>{po.line_count || 1} product(s)</strong></span>
                     </div>
                   </div>
 
                   <div style={{ textAlign: 'right' }}>
-                    <div className="tabular-nums" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--status-success-text)' }}>
+                    <div className="tabular-nums" style={{ fontSize: '19px', fontWeight: 800, color: 'var(--status-success-text)' }}>
                       ₹{po.total_value?.toLocaleString('en-IN') || '—'}
                     </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{po.line_count} item(s)</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Order Total Amount</div>
                   </div>
                 </div>
 
@@ -388,7 +385,7 @@ export default function PurchaseOrdersPage() {
                       className="diq-btn diq-btn-secondary diq-btn-sm"
                       style={{ textDecoration: 'none' }}
                     >
-                      <FileText size={13} /> PDF
+                      <FileText size={13} /> Download PDF
                     </a>
                     <a
                       href={`/api/purchase-orders/${po.id}/csv`}
@@ -396,14 +393,14 @@ export default function PurchaseOrdersPage() {
                       className="diq-btn diq-btn-secondary diq-btn-sm"
                       style={{ textDecoration: 'none' }}
                     >
-                      <Download size={13} /> CSV
+                      <Download size={13} /> Export Excel / CSV
                     </a>
                   </div>
 
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {po.status !== 'issued' && po.status !== 'received' && (
                       <button onClick={() => handleEmailSupplier(po.id)} className="diq-btn diq-btn-secondary diq-btn-sm">
-                        <Mail size={13} /> Send to Supplier
+                        <CheckCircle2 size={13} /> Confirm & Issue Order
                       </button>
                     )}
                     {po.status !== 'received' && (
@@ -428,7 +425,7 @@ export default function PurchaseOrdersPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid var(--border-subtle)' }}>
               <div>
                 <h3 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>Record Goods Received</h3>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>PO: {selectedPo.po_number} • Supplier: {selectedPo.supplier?.name}</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Order: {selectedPo.po_number}</p>
               </div>
               <button onClick={() => setReceiptModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
                 <X size={20} />
@@ -449,9 +446,15 @@ export default function PurchaseOrdersPage() {
                       borderRadius: 'var(--border-radius-md)', border: '1px solid var(--border-subtle)',
                     }}>
                       <div>
-                        <div style={{ fontWeight: 600, fontSize: '13px' }}>{line.product_id}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{line.product_name}</div>
-                        <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Ordered: {line.quantity_ordered} | Already got: {line.quantity_received}</div>
+                        <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
+                          {getProductName(line.product_id, line.product_name)}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                          SKU: {line.product_id}
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                          Ordered: {line.quantity_ordered} units | Received: {line.quantity_received} units
+                        </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Received:</label>
@@ -499,7 +502,7 @@ export default function PurchaseOrdersPage() {
                     marginBottom: '8px', fontSize: '12px',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, marginBottom: '6px' }}>
-                      <span>{res.product_id} — {res.product_name}</span>
+                      <span>{getProductName(res.product_id, res.product_name)} <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--text-muted)' }}>(SKU: {res.product_id})</span></span>
                       <span style={{ color: 'var(--status-warning-text)' }}>
                         Actual: {res.actual_lead_time_days}d (Promised: {res.promised_lead_time_days}d)
                       </span>

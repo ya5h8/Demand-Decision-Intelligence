@@ -50,8 +50,8 @@ export default function ForwardBuyWidget({ productId = 'SKU-001' }) {
 
         <div className="flex items-center gap-3">
           <label className="text-xs text-slate-300 font-medium">Expected Price Rise:</label>
-          <select 
-            value={deltaPct} 
+          <select
+            value={deltaPct}
             onChange={(e) => setDeltaPct(parseFloat(e.target.value))}
             className="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-emerald-500"
           >
@@ -130,7 +130,7 @@ export default function ForwardBuyWidget({ productId = 'SKU-001' }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {Object.entries(data.sensitivity).map(([key, s]) => {
               const label = key === 'p25_conservative' ? 'Conservative (25th %)' :
-                            key === 'p50_expected' ? 'Expected (50th %)' : 'Aggressive (75th %)';
+                key === 'p50_expected' ? 'Expected (50th %)' : 'Aggressive (75th %)';
               return (
                 <div key={key} className="bg-slate-950/60 border border-slate-800 rounded-lg p-3 text-xs">
                   <div className="font-semibold text-slate-200">{label}</div>

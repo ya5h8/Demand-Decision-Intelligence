@@ -42,7 +42,6 @@ const NAV_SECTIONS = [
     title: 'Forecasting',
     items: [
       { name: 'Forecast Studio', path: '/forecast', icon: TrendingUp },
-      { name: 'Model Registry', path: '/model-performance', icon: Cpu },
       { name: 'What-If Simulator', path: '/simulator', icon: Sliders },
       { name: 'Festival Calendar', path: '/calendar', icon: Calendar },
     ],

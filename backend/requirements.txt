@@ -189,3 +189,5 @@ wheel==0.45.1
 wrapt==2.0.1
 xlrd==2.0.2
 python-jose[cryptography]==3.5.0
+structlog>=24.0.0
+duckdb>=1.0.0

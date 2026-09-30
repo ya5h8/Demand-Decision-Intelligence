@@ -117,7 +117,7 @@ export default function DataQualityScorecardPage() {
   ];
 
   const scoreColor = compositeScore >= 80 ? 'var(--status-success-text)' :
-                     compositeScore >= 50 ? 'var(--status-warning-text)' : 'var(--status-critical-text)';
+    compositeScore >= 50 ? 'var(--status-warning-text)' : 'var(--status-critical-text)';
 
   return (
     <PageShell>
@@ -259,9 +259,9 @@ export default function DataQualityScorecardPage() {
               const comp = components[dim.key] || { score: 0, max: 10, metric: 'Not audited' };
               const pct = Math.round((comp.score / comp.max) * 100);
               const barColor = pct >= 80 ? 'var(--status-success-icon)' :
-                               pct >= 50 ? 'var(--status-warning-icon)' : 'var(--status-critical-icon)';
+                pct >= 50 ? 'var(--status-warning-icon)' : 'var(--status-critical-icon)';
               const bgColor = pct >= 80 ? 'var(--status-success-bg)' :
-                              pct >= 50 ? 'var(--status-warning-bg)' : 'var(--status-critical-bg)';
+                pct >= 50 ? 'var(--status-warning-bg)' : 'var(--status-critical-bg)';
 
               return (
                 <div key={dim.key} style={{

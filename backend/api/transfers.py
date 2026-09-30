@@ -18,6 +18,7 @@ from backend.core.deps import get_current_user, require_role, get_current_user_o
 from backend.models.user import User
 from backend.models.transfer import Location, TransferLane, TransferOrder, TransferOrderLine
 from backend.services.transfer_optimizer import find_transfer_opportunities, ensure_default_locations_and_lanes
+from backend.services.dataset_service import resolve_dataset
 
 router = APIRouter(prefix="/transfers", tags=["Inter-City Transfers"])
 
@@ -37,7 +38,7 @@ class CreateTransferOrderRequest(BaseModel):
 
 @router.get("/opportunities")
 def get_transfer_opportunities(
-    dataset_id: Optional[int] = 1,
+    dataset_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_or_guest),
 ):
@@ -45,7 +46,9 @@ def get_transfer_opportunities(
     Scans network for inter-city transfer opportunities where moving surplus
     stock is cheaper and faster than supplier purchase, while strictly protecting source ROP.
     """
-    return find_transfer_opportunities(dataset_id=dataset_id or 1, db=db)
+    target_ds = resolve_dataset(db, current_user, dataset_id)
+    eff_dataset_id = target_ds.id if target_ds else 1
+    return find_transfer_opportunities(dataset_id=eff_dataset_id, db=db)
 
 
 @router.get("/locations")

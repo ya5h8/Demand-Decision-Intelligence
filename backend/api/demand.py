@@ -72,6 +72,10 @@ def get_demand_summary(
     if agg and agg.min_date and agg.max_date:
         date_range_days = (agg.max_date - agg.min_date).days + 1
 
+    months_count = max(1.0, round(date_range_days / 30.4, 1)) if date_range_days > 0 else 1.0
+    monthly_rev = round(total_rev / months_count, 2)
+    monthly_qty = round(total_qty / months_count, 0)
+
     # Real capital at risk from DeadStockRecord
     dead_capital = db.query(func.sum(DeadStockRecord.capital_tied_up)).filter(
         DeadStockRecord.dataset_id == target_dataset.id
@@ -85,6 +89,9 @@ def get_demand_summary(
         "total_revenue_inr": total_rev,
         "total_quantity": total_qty,
         "total_revenue": total_rev,
+        "total_historical_months": months_count,
+        "monthly_run_rate_revenue": monthly_rev,
+        "monthly_run_rate_quantity": monthly_qty,
         "capital_at_risk": float(dead_capital),
         "unique_products": unique_prods,
         "unique_cities": unique_cities,
@@ -111,6 +118,150 @@ def get_demand_summary(
             "deleted_rows": 0,
             "unmatched_attributes_status": "VERIFIED_CLEAN",
         },
+    }
+
+
+@router.get("/timeline", summary="Get Aggregated Sales Trends Timeline")
+def get_demand_timeline(
+    dataset_id: Optional[int] = None,
+    product_id: Optional[str] = None,
+    city_name: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_or_guest),
+):
+    """
+    Returns actual historical sales trends aggregated daily and monthly,
+    plus top products and city distributions for the active dataset.
+    """
+    user_id = current_user.id if current_user and getattr(current_user, "id", None) else None
+    target_dataset = resolve_dataset(db, user_id, dataset_id)
+
+    query = db.query(
+        DailyProductDemand.date_,
+        func.sum(DailyProductDemand.total_quantity).label("units"),
+        func.sum(DailyProductDemand.total_sales_value).label("revenue"),
+        func.count(DailyProductDemand.id).label("transactions"),
+    ).filter(DailyProductDemand.dataset_id == target_dataset.id)
+
+    if product_id:
+        query = query.filter(DailyProductDemand.product_id == str(product_id).strip())
+    if city_name and city_name != "ALL":
+        query = query.filter(DailyProductDemand.city_name.ilike(city_name.strip()))
+
+    daily_rows = query.group_by(DailyProductDemand.date_).order_by(DailyProductDemand.date_.asc()).all()
+
+    daily_trend = []
+    monthly_map = {}
+    total_rev = 0.0
+    total_units = 0.0
+
+    month_names = {
+        "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr",
+        "05": "May", "06": "Jun", "07": "Jul", "08": "Aug",
+        "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"
+    }
+
+    for r in daily_rows:
+        d_str = str(r.date_)
+        u = float(r.units or 0.0)
+        v = float(r.revenue or 0.0)
+        total_units += u
+        total_rev += v
+
+        daily_trend.append({
+            "date": d_str,
+            "units": round(u, 1),
+            "revenue": round(v, 2),
+            "transactions": int(r.transactions or 1),
+        })
+
+        month_key = d_str[:7]
+        if month_key not in monthly_map:
+            parts = month_key.split("-")
+            label = f"{month_names.get(parts[1], parts[1])} {parts[0]}" if len(parts) == 2 else month_key
+            monthly_map[month_key] = {"month": month_key, "label": label, "units": 0.0, "revenue": 0.0, "days": 0}
+        monthly_map[month_key]["units"] += u
+        monthly_map[month_key]["revenue"] += v
+        monthly_map[month_key]["days"] += 1
+
+    monthly_trend = [
+        {
+            "month": k,
+            "label": v["label"],
+            "units": round(v["units"], 1),
+            "revenue": round(v["revenue"], 2),
+            "days": v["days"],
+            "avg_daily_revenue": round(v["revenue"] / max(1, v["days"]), 2),
+        }
+        for k, v in sorted(monthly_map.items())
+    ]
+
+    top_p_q = db.query(
+        DailyProductDemand.product_id,
+        Product.product_name,
+        func.sum(DailyProductDemand.total_quantity).label("units"),
+        func.sum(DailyProductDemand.total_sales_value).label("revenue")
+    ).outerjoin(
+        Product, Product.product_id == DailyProductDemand.product_id
+    ).filter(
+        DailyProductDemand.dataset_id == target_dataset.id
+    ).group_by(
+        DailyProductDemand.product_id, Product.product_name
+    ).order_by(
+        desc("revenue")
+    ).limit(10).all()
+
+    top_products = [
+        {
+            "product_id": str(r[0]),
+            "product_name": r[1] or f"SKU #{r[0]}",
+            "units": round(float(r[2] or 0.0), 1),
+            "revenue": round(float(r[3] or 0.0), 2),
+        }
+        for r in top_p_q
+    ]
+
+    city_q = db.query(
+        DailyProductDemand.city_name,
+        func.sum(DailyProductDemand.total_quantity).label("units"),
+        func.sum(DailyProductDemand.total_sales_value).label("revenue")
+    ).filter(
+        DailyProductDemand.dataset_id == target_dataset.id
+    ).group_by(
+        DailyProductDemand.city_name
+    ).order_by(
+        desc("revenue")
+    ).all()
+
+    cities = [
+        {
+            "city": r[0] or "General",
+            "units": round(float(r[1] or 0.0), 1),
+            "revenue": round(float(r[2] or 0.0), 2),
+        }
+        for r in city_q if r[0]
+    ]
+
+    start_date = daily_trend[0]["date"] if daily_trend else None
+    end_date = daily_trend[-1]["date"] if daily_trend else None
+
+    return {
+        "status": "success",
+        "dataset_id": target_dataset.id,
+        "dataset_name": target_dataset.name,
+        "summary": {
+            "total_revenue": round(total_rev, 2),
+            "total_units": round(total_units, 1),
+            "start_date": start_date,
+            "end_date": end_date,
+            "total_months": len(monthly_trend),
+            "active_days": len(daily_trend),
+            "unique_products": len(top_products),
+        },
+        "monthly_trend": monthly_trend,
+        "daily_trend": daily_trend,
+        "top_products": top_products,
+        "city_breakdown": cities,
     }
 
 

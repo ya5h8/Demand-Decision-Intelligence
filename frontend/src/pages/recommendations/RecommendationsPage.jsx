@@ -27,6 +27,7 @@ import {
   EmptyState,
   SegmentedControl,
 } from '../../components/ui';
+import { getProductName } from '../../utils/productNames';
 
 export default function RecommendationsPage() {
   const { user } = useAuth();
@@ -182,13 +183,17 @@ export default function RecommendationsPage() {
                       const sc = statusConfig[rec.status] || { variant: 'neutral', label: rec.status };
                       return (
                         <tr key={rec.id}
-                            style={{ borderBottom: '1px solid var(--border-subtle)' }}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-surface-subtle)'}
-                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
+                          style={{ borderBottom: '1px solid var(--border-subtle)' }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-surface-subtle)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#ffffff'}
                         >
                           <td style={tdStyle}>
-                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{rec.product_id}</div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{rec.product_name}</div>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {getProductName(rec.product_id, rec.product_name)}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                              SKU: {rec.product_id}
+                            </div>
                           </td>
                           <td style={tdStyle}>{rec.city_name || '—'}</td>
                           <td style={tdStyle}>
@@ -281,8 +286,12 @@ export default function RecommendationsPage() {
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                       <div>
-                        <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>{c.product_id}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{c.product_name}</div>
+                        <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                          {getProductName(c.product_id, c.product_name)}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                          SKU: {c.product_id}
+                        </div>
                       </div>
                       <StatusBadge variant="info" label={`${c.observations_count} deliveries`} size="sm" />
                     </div>

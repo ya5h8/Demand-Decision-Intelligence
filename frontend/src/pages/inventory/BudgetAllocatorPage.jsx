@@ -143,13 +143,16 @@ export default function BudgetAllocatorPage() {
   const padding = { top: 20, right: 30, bottom: 40, left: 60 };
 
   const chartCoords = useMemo(() => {
-    if (!curve || curve.length === 0) return { path: '', area: '', points: [], maxSpend: 1, maxRisk: 1 };
+    const innerW = chartWidth - padding.left - padding.right;
+    const innerH = chartHeight - padding.top - padding.bottom;
+    const baselineY = padding.top + innerH;
+
+    if (!curve || curve.length === 0) {
+      return { path: '', area: '', points: [], maxSpend: 1, maxRisk: 1, budgetX: 0, baselineY, innerH, innerW };
+    }
 
     const maxSpend = Math.max(...curve.map(p => p.spend), budget * 1.2, 1000);
     const maxRisk = Math.max(...curve.map(p => p.cumulative_risk_avoided), 100);
-
-    const innerW = chartWidth - padding.left - padding.right;
-    const innerH = chartHeight - padding.top - padding.bottom;
 
     const points = curve.map(p => {
       const x = padding.left + (p.spend / maxSpend) * innerW;
@@ -158,7 +161,6 @@ export default function BudgetAllocatorPage() {
     });
 
     const path = points.reduce((acc, pt, i) => `${acc} ${i === 0 ? 'M' : 'L'} ${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`, '');
-    const baselineY = padding.top + innerH;
     const area = `${path} L ${points[points.length - 1].x.toFixed(1)} ${baselineY} L ${points[0].x.toFixed(1)} ${baselineY} Z`;
 
     const budgetX = padding.left + (budget / maxSpend) * innerW;

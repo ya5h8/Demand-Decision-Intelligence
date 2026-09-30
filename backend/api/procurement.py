@@ -21,12 +21,13 @@ from backend.services.procurement_service import (
     send_po_email,
 )
 from backend.services.recommendation_lifecycle import process_goods_receipt_learning_loop
+from backend.services.dataset_service import resolve_dataset
 
 router = APIRouter(prefix="/purchase-orders", tags=["Procurement & Purchase Orders"])
 
 
 class GeneratePORequest(BaseModel):
-    dataset_id: int = 1
+    dataset_id: Optional[int] = None
     recommendation_ids: Optional[List[int]] = None
 
 
@@ -41,6 +42,131 @@ class RecordReceiptRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class CreateDirectPORequest(BaseModel):
+    product_id: str
+    quantity: int
+    product_name: Optional[str] = None
+    unit_cost: Optional[float] = None
+    notes: Optional[str] = None
+    dataset_id: Optional[int] = None
+
+
+@router.post("/create-direct", status_code=status.HTTP_201_CREATED)
+def create_direct_po(
+    payload: CreateDirectPORequest,
+    db: Session = Depends(get_db),
+    _write_guard: None = Depends(enforce_writable_db),
+    current_user: Optional[User] = Depends(get_current_user_or_guest),
+):
+    """
+    Creates an immediate purchase order for a single product directly from SKU Detail Page.
+    Returns complete order details and download URLs for PDF & Excel/CSV.
+    """
+    import json
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import func
+    from backend.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+    from backend.models.product import Product
+
+    target_ds = resolve_dataset(db, current_user, payload.dataset_id)
+    eff_dataset_id = target_ds.id if target_ds else 1
+
+    pid = str(payload.product_id).strip()
+    qty = max(1, int(payload.quantity))
+
+    # Resolve product
+    prod = db.query(Product).filter(Product.product_id == pid).first()
+    resolved_name = payload.product_name or (prod.product_name if prod else f"Product #{pid}")
+
+    # Resolve unit cost (approx. reasonable wholesale cost)
+    unit_cost = payload.unit_cost
+    if not unit_cost:
+        unit_cost = 28.0
+        if prod and hasattr(prod, 'unit_cost') and prod.unit_cost:
+            unit_cost = float(prod.unit_cost)
+
+    line_total = round(qty * float(unit_cost), 2)
+
+    # Supplier
+    supplier = db.query(Supplier).first()
+    if not supplier:
+        supplier = Supplier(
+            name="Standard Wholesale Supply",
+            contact_email="orders@standardwholesale.example.com",
+            contact_phone="+91 98765 43210",
+            address="Commercial Distribution Center",
+            payment_terms_days=30,
+            is_active=True
+        )
+        db.add(supplier)
+        db.flush()
+
+    now = datetime.now(timezone.utc)
+    current_year = now.year
+    max_id = db.query(func.max(PurchaseOrder.id)).scalar() or 0
+    seq_num = max_id + 1
+    po_number = f"PO-{current_year}-{seq_num:04d}"
+    while db.query(PurchaseOrder).filter(PurchaseOrder.po_number == po_number).first():
+        seq_num += 1
+        po_number = f"PO-{current_year}-{seq_num:04d}"
+
+    delivery_date = now + timedelta(days=7)
+
+    po = PurchaseOrder(
+        po_number=po_number,
+        supplier_id=supplier.id,
+        dataset_id=eff_dataset_id,
+        status="confirmed",
+        total_value=line_total,
+        currency="INR",
+        expected_delivery_date=delivery_date,
+        created_by=current_user.id if current_user else None,
+        triggered_by="SKU_DETAIL_PAGE",
+        notes=payload.notes or f"Direct order for {resolved_name}",
+    )
+    db.add(po)
+    db.flush()
+
+    po_line = PurchaseOrderLine(
+        po_id=po.id,
+        product_id=pid,
+        quantity_ordered=qty,
+        quantity_received=0,
+        unit_cost=float(unit_cost),
+        line_total=float(line_total),
+        reason_code="RESTOCK_ORDER",
+        context_data=json.dumps({
+            "product_name": resolved_name,
+            "quantity_ordered": qty,
+            "unit_cost": unit_cost,
+            "order_date": now.strftime("%Y-%m-%d"),
+        })
+    )
+    db.add(po_line)
+    db.commit()
+    db.refresh(po)
+
+    return {
+        "status": "success",
+        "message": f"Purchase Order {po.po_number} created successfully",
+        "purchase_order": {
+            "id": po.id,
+            "po_number": po.po_number,
+            "product_id": pid,
+            "product_name": resolved_name,
+            "quantity_ordered": qty,
+            "unit_cost": float(unit_cost),
+            "total_value": float(line_total),
+            "currency": "INR",
+            "created_at": po.created_at.strftime("%d %b %Y, %I:%M %p") if po.created_at else now.strftime("%d %b %Y"),
+            "expected_delivery_date": delivery_date.strftime("%d %b %Y"),
+            "status": "CONFIRMED",
+            "pdf_url": f"/api/purchase-orders/{po.id}/pdf",
+            "csv_url": f"/api/purchase-orders/{po.id}/csv",
+        }
+    }
+
+
 @router.post("/generate", status_code=status.HTTP_201_CREATED)
 def generate_pos(
     payload: GeneratePORequest,
@@ -52,9 +178,12 @@ def generate_pos(
     Generates DRAFT POs grouped by preferred supplier with quantities
     rounded UP to order_multiple and floored at MOQ.
     """
+    target_ds = resolve_dataset(db, current_user, payload.dataset_id)
+    eff_dataset_id = target_ds.id if target_ds else 1
+
     user_id = current_user.id if current_user else None
     results = generate_draft_purchase_orders(
-        dataset_id=payload.dataset_id,
+        dataset_id=eff_dataset_id,
         db=db,
         created_by_user_id=user_id,
         specific_recommendation_ids=payload.recommendation_ids
@@ -68,15 +197,18 @@ def generate_pos(
 
 @router.get("")
 def list_purchase_orders(
-    dataset_id: Optional[int] = 1,
+    dataset_id: Optional[int] = None,
     status_filter: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_or_guest),
 ):
     """Lists purchase orders with supplier and line count information."""
+    target_ds = resolve_dataset(db, current_user, dataset_id)
+    eff_dataset_id = target_ds.id if target_ds else 1
+
     query = db.query(PurchaseOrder)
-    if dataset_id:
-        query = query.filter(PurchaseOrder.dataset_id == dataset_id)
+    if eff_dataset_id:
+        query = query.filter(PurchaseOrder.dataset_id == eff_dataset_id)
     if status_filter:
         query = query.filter(PurchaseOrder.status == status_filter.lower())
 
@@ -102,7 +234,7 @@ def list_purchase_orders(
 
 @router.get("/catalog-lead-times")
 def list_catalog_lead_times(
-    dataset_id: Optional[int] = 1,
+    dataset_id: Optional[int] = None,
     limit: int = 100,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_or_guest),

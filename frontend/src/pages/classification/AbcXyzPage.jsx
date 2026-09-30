@@ -37,8 +37,10 @@ export default function AbcXyzPage() {
   const [selectedCell, setSelectedCell] = useState('AX');
   const [drilldownData, setDrilldownData] = useState(null);
   const [drilldownLoading, setDrilldownLoading] = useState(false);
+  const [allSkus, setAllSkus] = useState([]);
+  const [activeFilter, setActiveFilter] = useState('ALL'); // 'ALL' | 'A' | 'B' | 'C' | specific cell e.g. 'AX'
   const [skuSearch, setSkuSearch] = useState('');
-  
+
   // Policy tuning modal state
   const [showPolicyModal, setShowPolicyModal] = useState(false);
   const [policyForm, setPolicyForm] = useState(null);
@@ -61,6 +63,26 @@ export default function AbcXyzPage() {
       const res = await api.get('/classification/matrix');
       if (res?.data) {
         setMatrixData(res.data);
+        
+        // Fetch all SKUs from all active cells so user can see every product and filter by Grade A, B, C
+        const cellsWithSkus = (res.data.cells || []).filter(c => c.sku_count > 0);
+        if (cellsWithSkus.length > 0) {
+          const promises = cellsWithSkus.map(c =>
+            api.get(`/classification/skus?cell=${c.cell}&limit=200`)
+              .then(r => (r.data?.skus || []).map(sku => ({
+                ...sku,
+                cell: c.cell,
+                abc_class: c.abc_class,
+                xyz_class: c.xyz_class,
+                policy: r.data?.policy
+              })))
+              .catch(() => [])
+          );
+          const results = await Promise.all(promises);
+          setAllSkus(results.flat());
+        } else {
+          setAllSkus([]);
+        }
       }
     } catch (err) {
       console.error('Failed to load ABC-XYZ matrix', err);
@@ -120,11 +142,43 @@ export default function AbcXyzPage() {
   const totalSkus = matrixData?.total_skus || 0;
   const totalVal = matrixData?.total_annual_value || 0;
 
-  const filteredSkus = (drilldownData?.skus || []).filter(s =>
-    s.product_name.toLowerCase().includes(skuSearch.toLowerCase()) ||
-    s.product_id.toLowerCase().includes(skuSearch.toLowerCase()) ||
-    s.brand_name.toLowerCase().includes(skuSearch.toLowerCase())
-  );
+  const gradeACells = grid.A || [];
+  const gradeBCells = grid.B || [];
+  const gradeCCells = grid.C || [];
+
+  const gradeACount = gradeACells.reduce((acc, c) => acc + (c.sku_count || 0), 0);
+  const gradeBCount = gradeBCells.reduce((acc, c) => acc + (c.sku_count || 0), 0);
+  const gradeCCount = gradeCCells.reduce((acc, c) => acc + (c.sku_count || 0), 0);
+
+  const gradeAVal = gradeACells.reduce((acc, c) => acc + (c.annual_consumption_value || 0), 0);
+  const gradeBVal = gradeBCells.reduce((acc, c) => acc + (c.annual_consumption_value || 0), 0);
+  const gradeCVal = gradeCCells.reduce((acc, c) => acc + (c.annual_consumption_value || 0), 0);
+
+  // Filter products by Grade (A/B/C) or specific cell, and search query
+  const displayedSkus = allSkus.filter((s) => {
+    if (activeFilter === 'A') {
+      if (s.abc_class !== 'A') return false;
+    } else if (activeFilter === 'B') {
+      if (s.abc_class !== 'B') return false;
+    } else if (activeFilter === 'C') {
+      if (s.abc_class !== 'C') return false;
+    } else if (activeFilter !== 'ALL') {
+      if (s.cell !== activeFilter) return false;
+    }
+
+    if (skuSearch) {
+      const q = skuSearch.toLowerCase();
+      const match =
+        (s.product_name || '').toLowerCase().includes(q) ||
+        (s.product_id || '').toLowerCase().includes(q) ||
+        (s.brand_name || '').toLowerCase().includes(q) ||
+        (s.category || '').toLowerCase().includes(q) ||
+        (s.cell || '').toLowerCase().includes(q);
+      if (!match) return false;
+    }
+
+    return true;
+  });
 
   return (
     <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
@@ -133,7 +187,7 @@ export default function AbcXyzPage() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-              ABC-XYZ Policy Matrix
+              Product Importance & Sales Stability (ABC-XYZ)
             </h1>
             <span
               style={{
@@ -149,11 +203,11 @@ export default function AbcXyzPage() {
                 gap: '0.3rem'
               }}
             >
-              <Grid3X3 size={13} /> 9-Cell Policy Matrix
+              <Grid3X3 size={13} /> 9 Store Categories
             </span>
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: '0.3rem' }}>
-            Segments items by Annual Consumption Value (Pareto ABC 80/15/5%) and Demand Predictability (XYZ CV² &lt;0.25, 0.25-1.0, &gt;1.0) with configurable policies.
+            Automatically groups your products into 9 categories based on how much money they generate (A, B, C) and how regularly customers buy them (X, Y, Z).
           </p>
         </div>
 
@@ -241,19 +295,19 @@ export default function AbcXyzPage() {
           marginBottom: '1.5rem'
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem', flexWrap: 'wrap', gap: '8px' }}>
           <div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-              Segmentation Grid ({totalSkus} SKUs · ₹{Math.round(totalVal).toLocaleString()} Annual Value)
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+              Store Classification Grid ({totalSkus} SKUs · ₹{Math.round(totalVal).toLocaleString()} Total Sales Value)
             </h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
-              Click on any of the 9 cells to inspect policies and drill down into the classified SKUs.
+              Click on any of the 9 boxes below to see which items belong to that category.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-            <span><strong>X:</strong> Constant (CV² &lt; 0.25)</span>
-            <span><strong>Y:</strong> Variable (0.25–1.0)</span>
-            <span><strong>Z:</strong> Erratic (CV² &gt; 1.0)</span>
+            <span><strong style={{ color: '#60a5fa' }}>X:</strong> Sells Daily (Steady)</span>
+            <span><strong style={{ color: '#fbbf24' }}>Y:</strong> Sells in Waves</span>
+            <span><strong style={{ color: '#f87171' }}>Z:</strong> Rare / Unpredictable</span>
           </div>
         </div>
 
@@ -262,18 +316,18 @@ export default function AbcXyzPage() {
           {/* Column Headers */}
           <div></div>
           <div style={{ textAlign: 'center', fontWeight: 700, color: '#60a5fa', fontSize: '0.9rem', padding: '0.4rem', backgroundColor: 'rgba(59, 130, 246, 0.08)', borderRadius: '6px' }}>
-            X (Predictable)
+            X (Sells Daily)
           </div>
           <div style={{ textAlign: 'center', fontWeight: 700, color: '#fbbf24', fontSize: '0.9rem', padding: '0.4rem', backgroundColor: 'rgba(245, 158, 11, 0.08)', borderRadius: '6px' }}>
-            Y (Variable)
+            Y (Sells in Waves)
           </div>
           <div style={{ textAlign: 'center', fontWeight: 700, color: '#f87171', fontSize: '0.9rem', padding: '0.4rem', backgroundColor: 'rgba(239, 68, 68, 0.08)', borderRadius: '6px' }}>
-            Z (Erratic)
+            Z (Rare / Spikes)
           </div>
 
           {/* Row A */}
           {['A', 'B', 'C'].map((rowKey) => {
-            const rowLabel = rowKey === 'A' ? 'A (Top 80%)' : rowKey === 'B' ? 'B (Next 15%)' : 'C (Last 5%)';
+            const rowLabel = rowKey === 'A' ? 'A (Top 80% Revenue)' : rowKey === 'B' ? 'B (Mid 15% Revenue)' : 'C (Low 5% Revenue)';
             const rowCells = grid[rowKey] || [];
 
             return (
@@ -299,13 +353,16 @@ export default function AbcXyzPage() {
 
                 {/* 3 Cell Columns for this row */}
                 {rowCells.map((cell) => {
-                  const isSelected = selectedCell === cell.cell;
+                  const isSelected = selectedCell === cell.cell || activeFilter === cell.cell;
                   const styling = CELL_COLOR_MAP[cell.cell] || CELL_COLOR_MAP.AX;
 
                   return (
                     <div
                       key={cell.cell}
-                      onClick={() => setSelectedCell(cell.cell)}
+                      onClick={() => {
+                        setSelectedCell(cell.cell);
+                        setActiveFilter(cell.cell);
+                      }}
                       style={{
                         backgroundColor: isSelected ? 'rgba(59, 130, 246, 0.18)' : styling.bg,
                         border: isSelected ? '2px solid #3b82f6' : `1px solid ${styling.border}`,
@@ -358,7 +415,115 @@ export default function AbcXyzPage() {
         </div>
       </div>
 
-      {/* Cell Drilldown Section */}
+      {/* Simple Non-Technical Grade Overview Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+        {/* Grade A Card */}
+        <div
+          onClick={() => setActiveFilter(activeFilter === 'A' ? 'ALL' : 'A')}
+          style={{
+            backgroundColor: activeFilter === 'A' ? 'rgba(16, 185, 129, 0.16)' : 'var(--bg-surface)',
+            border: activeFilter === 'A' ? '2px solid #10b981' : '1px solid rgba(16, 185, 129, 0.3)',
+            borderRadius: '12px',
+            padding: '1.2rem',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            boxShadow: activeFilter === 'A' ? '0 0 15px rgba(16, 185, 129, 0.25)' : 'none'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#34d399', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              🟢 Grade A (VIP / Top Earners)
+            </span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, backgroundColor: 'rgba(16, 185, 129, 0.2)', color: '#34d399', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+              {totalVal > 0 ? Math.round((gradeAVal / totalVal) * 100) : 0}% Sales
+            </span>
+          </div>
+          <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+            {gradeACount} Products
+            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-emerald)', marginLeft: '8px' }}>
+              ₹{Math.round(gradeAVal).toLocaleString()}
+            </span>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.5rem 0 0 0', lineHeight: 1.35 }}>
+            Aapke store ke hero items jo lagbhag 80%+ kamai generate karte hain. Inka stock kabhi khatam nahi hona chahiye.
+          </p>
+          <div style={{ marginTop: '0.6rem', fontSize: '0.72rem', fontWeight: 600, color: activeFilter === 'A' ? '#34d399' : 'var(--text-secondary)' }}>
+            {activeFilter === 'A' ? '✓ Showing Grade A items below' : 'Click to view Grade A items →'}
+          </div>
+        </div>
+
+        {/* Grade B Card */}
+        <div
+          onClick={() => setActiveFilter(activeFilter === 'B' ? 'ALL' : 'B')}
+          style={{
+            backgroundColor: activeFilter === 'B' ? 'rgba(59, 130, 246, 0.16)' : 'var(--bg-surface)',
+            border: activeFilter === 'B' ? '2px solid #3b82f6' : '1px solid rgba(59, 130, 246, 0.3)',
+            borderRadius: '12px',
+            padding: '1.2rem',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            boxShadow: activeFilter === 'B' ? '0 0 15px rgba(59, 130, 246, 0.25)' : 'none'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              🔵 Grade B (Regular Mid-Tier)
+            </span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, backgroundColor: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+              {totalVal > 0 ? Math.round((gradeBVal / totalVal) * 100) : 0}% Sales
+            </span>
+          </div>
+          <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+            {gradeBCount} Products
+            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#60a5fa', marginLeft: '8px' }}>
+              ₹{Math.round(gradeBVal).toLocaleString()}
+            </span>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.5rem 0 0 0', lineHeight: 1.35 }}>
+            Normal regular bikne wale items jo 10-15% kamai dete hain. (Jaise Wireless Gaming Mouse & Streaming Webcam).
+          </p>
+          <div style={{ marginTop: '0.6rem', fontSize: '0.72rem', fontWeight: 600, color: activeFilter === 'B' ? '#60a5fa' : 'var(--text-secondary)' }}>
+            {activeFilter === 'B' ? '✓ Showing Grade B items below' : 'Click to view Grade B items →'}
+          </div>
+        </div>
+
+        {/* Grade C Card */}
+        <div
+          onClick={() => setActiveFilter(activeFilter === 'C' ? 'ALL' : 'C')}
+          style={{
+            backgroundColor: activeFilter === 'C' ? 'rgba(245, 158, 11, 0.16)' : 'var(--bg-surface)',
+            border: activeFilter === 'C' ? '2px solid #f59e0b' : '1px solid rgba(245, 158, 11, 0.25)',
+            borderRadius: '12px',
+            padding: '1.2rem',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            boxShadow: activeFilter === 'C' ? '0 0 15px rgba(245, 158, 11, 0.25)' : 'none'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              ⚪ Grade C (Low Volume / Slow Moving)
+            </span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, backgroundColor: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>
+              {totalVal > 0 ? Math.round((gradeCVal / totalVal) * 100) : 0}% Sales
+            </span>
+          </div>
+          <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+            {gradeCCount} Products
+            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fbbf24', marginLeft: '8px' }}>
+              ₹{Math.round(gradeCVal).toLocaleString()}
+            </span>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.5rem 0 0 0', lineHeight: 1.35 }}>
+            Bohot kam bikne wale ya trial items (5% revenue). In par zyada stock ya cash block mat karein.
+          </p>
+          <div style={{ marginTop: '0.6rem', fontSize: '0.72rem', fontWeight: 600, color: activeFilter === 'C' ? '#fbbf24' : 'var(--text-secondary)' }}>
+            {activeFilter === 'C' ? '✓ Showing Grade C items below' : 'Click to view Grade C items →'}
+          </div>
+        </div>
+      </div>
+
+      {/* SKUs List & Filter Section */}
       <div
         style={{
           backgroundColor: 'var(--bg-surface)',
@@ -367,27 +532,52 @@ export default function AbcXyzPage() {
           padding: '1.5rem'
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.2rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
               <span
                 style={{
-                  fontSize: '1.2rem',
+                  fontSize: '0.85rem',
                   fontWeight: 800,
-                  color: CELL_COLOR_MAP[selectedCell]?.text || '#60a5fa',
-                  backgroundColor: CELL_COLOR_MAP[selectedCell]?.bg || 'rgba(59, 130, 246, 0.1)',
-                  padding: '0.2rem 0.6rem',
-                  borderRadius: '6px'
+                  color: activeFilter === 'A' ? '#34d399' : activeFilter === 'B' ? '#60a5fa' : activeFilter === 'C' ? '#fbbf24' : '#60a5fa',
+                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                  padding: '0.25rem 0.65rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-subtle)'
                 }}
               >
-                Cell {selectedCell}
+                {activeFilter === 'ALL'
+                  ? 'All Products'
+                  : activeFilter === 'A'
+                  ? 'Grade A'
+                  : activeFilter === 'B'
+                  ? 'Grade B'
+                  : activeFilter === 'C'
+                  ? 'Grade C'
+                  : `Cell ${activeFilter}`}
               </span>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                Active Policy & Classified SKUs ({drilldownData?.total || 0})
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                {activeFilter === 'ALL'
+                  ? `All Store Products (${displayedSkus.length} SKUs)`
+                  : activeFilter === 'A'
+                  ? `Grade A: Top 80% Money Makers (${displayedSkus.length} SKUs)`
+                  : activeFilter === 'B'
+                  ? `Grade B: Regular Mid-Tier Earners (${displayedSkus.length} SKUs)`
+                  : activeFilter === 'C'
+                  ? `Grade C: Low Volume Items (${displayedSkus.length} SKUs)`
+                  : `Cell ${activeFilter} Products (${displayedSkus.length} SKUs)`}
               </h3>
             </div>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginTop: '0.3rem' }}>
-              {drilldownData?.policy?.description || 'Review strategy and inventory parameters for this cell.'}
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: '0.3rem' }}>
+              {activeFilter === 'ALL'
+                ? 'Neeche sabhi items diye gaye hain. Har item ke aage uska Grade (A, B ya C) saaf dikhega.'
+                : activeFilter === 'A'
+                ? 'Ye items sabse zaroori hain. Inki bikri daily aur sabse zyada hoti hai.'
+                : activeFilter === 'B'
+                ? 'Ye items regular chalne wale hain jo store ki 10-15% kamai banate hain.'
+                : activeFilter === 'C'
+                ? 'Ye items bohot kam bikte hain.'
+                : `Viewing products and inventory parameters for Cell ${activeFilter}.`}
             </p>
           </div>
 
@@ -408,29 +598,118 @@ export default function AbcXyzPage() {
                 cursor: 'pointer'
               }}
             >
-              <Settings2 size={15} /> Tune Policy for {selectedCell}
+              <Settings2 size={15} /> Tune Policy for Cell {selectedCell}
             </button>
           </div>
         </div>
 
-        {/* Search */}
-        <div style={{ position: 'relative', marginBottom: '1rem', maxWidth: '350px' }}>
-          <Search size={15} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }} />
-          <input
-            type="text"
-            placeholder="Search by SKU ID, name or brand..."
-            value={skuSearch}
-            onChange={(e) => setSkuSearch(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '0.5rem 0.8rem 0.5rem 2.1rem',
-              backgroundColor: 'var(--bg-surface-elevated)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '8px',
-              color: 'var(--text-primary)',
-              fontSize: '0.84rem'
-            }}
-          />
+        {/* Filter Buttons & Search Bar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+          {/* Grade Filter Tabs */}
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setActiveFilter('ALL')}
+              style={{
+                padding: '0.45rem 0.9rem',
+                borderRadius: '8px',
+                border: activeFilter === 'ALL' ? '1px solid #3b82f6' : '1px solid var(--border-subtle)',
+                backgroundColor: activeFilter === 'ALL' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.04)',
+                color: activeFilter === 'ALL' ? '#93c5fd' : 'var(--text-secondary)',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              🌟 All Products ({allSkus.length})
+            </button>
+            <button
+              onClick={() => setActiveFilter('A')}
+              style={{
+                padding: '0.45rem 0.9rem',
+                borderRadius: '8px',
+                border: activeFilter === 'A' ? '1px solid #10b981' : '1px solid rgba(16, 185, 129, 0.2)',
+                backgroundColor: activeFilter === 'A' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.04)',
+                color: activeFilter === 'A' ? '#34d399' : 'var(--text-secondary)',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              🟢 Grade A ({gradeACount})
+            </button>
+            <button
+              onClick={() => setActiveFilter('B')}
+              style={{
+                padding: '0.45rem 0.9rem',
+                borderRadius: '8px',
+                border: activeFilter === 'B' ? '1px solid #3b82f6' : '1px solid rgba(59, 130, 246, 0.2)',
+                backgroundColor: activeFilter === 'B' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.04)',
+                color: activeFilter === 'B' ? '#60a5fa' : 'var(--text-secondary)',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              🔵 Grade B ({gradeBCount})
+            </button>
+            <button
+              onClick={() => setActiveFilter('C')}
+              style={{
+                padding: '0.45rem 0.9rem',
+                borderRadius: '8px',
+                border: activeFilter === 'C' ? '1px solid #f59e0b' : '1px solid rgba(245, 158, 11, 0.2)',
+                backgroundColor: activeFilter === 'C' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.04)',
+                color: activeFilter === 'C' ? '#fbbf24' : 'var(--text-secondary)',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              ⚪ Grade C ({gradeCCount})
+            </button>
+
+            {/* If filtered by specific cell like 'AX', 'BX' */}
+            {activeFilter !== 'ALL' && activeFilter !== 'A' && activeFilter !== 'B' && activeFilter !== 'C' && (
+              <button
+                onClick={() => setActiveFilter('ALL')}
+                style={{
+                  padding: '0.45rem 0.9rem',
+                  borderRadius: '8px',
+                  border: '1px solid #3b82f6',
+                  backgroundColor: 'rgba(59, 130, 246, 0.25)',
+                  color: '#93c5fd',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.3rem'
+                }}
+              >
+                Cell {activeFilter} ({displayedSkus.length}) <X size={13} />
+              </button>
+            )}
+          </div>
+
+          {/* Search */}
+          <div style={{ position: 'relative', width: '280px' }}>
+            <Search size={15} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              placeholder="Search product name, code, brand..."
+              value={skuSearch}
+              onChange={(e) => setSkuSearch(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.5rem 0.8rem 0.5rem 2.1rem',
+                backgroundColor: 'var(--bg-surface-elevated)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '8px',
+                color: 'var(--text-primary)',
+                fontSize: '0.84rem'
+              }}
+            />
+          </div>
         </div>
 
         {/* SKUs Table */}
@@ -438,67 +717,138 @@ export default function AbcXyzPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '0.75rem' }}>SKU ID</th>
+                <th style={{ padding: '0.75rem' }}>SKU Code</th>
                 <th style={{ padding: '0.75rem' }}>Product Name</th>
-                <th style={{ padding: '0.75rem' }}>Brand / Category</th>
-                <th style={{ padding: '0.75rem', textAlign: 'right' }}>Annual Value</th>
-                <th style={{ padding: '0.75rem', textAlign: 'right' }}>Mean Daily Demand</th>
-                <th style={{ padding: '0.75rem', textAlign: 'right' }}>Std Daily (CV²)</th>
+                <th style={{ padding: '0.75rem' }}>Grade & Category</th>
+                <th style={{ padding: '0.75rem' }}>Brand / Department</th>
+                <th style={{ padding: '0.75rem', textAlign: 'right' }}>Annual Sales Value</th>
+                <th style={{ padding: '0.75rem', textAlign: 'right' }}>Daily Sales</th>
+                <th style={{ padding: '0.75rem', textAlign: 'right' }}>Sales Regularity</th>
                 <th style={{ padding: '0.75rem', textAlign: 'right' }}>Unit Cost</th>
-                <th style={{ padding: '0.75rem', textAlign: 'center' }}>Policy Automation</th>
+                <th style={{ padding: '0.75rem', textAlign: 'center' }}>Restock Policy</th>
               </tr>
             </thead>
             <tbody>
-              {filteredSkus.map((sku) => (
-                <tr
-                  key={sku.product_id}
-                  style={{
-                    borderBottom: '1px solid var(--border-subtle)',
-                  }}
-                >
-                  <td style={{ padding: '0.75rem', fontWeight: 600, color: 'var(--accent-primary)' }}>
-                    #{sku.product_id}
-                  </td>
-                  <td style={{ padding: '0.75rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                    {sku.product_name}
-                  </td>
-                  <td style={{ padding: '0.75rem', color: 'var(--text-secondary)' }}>
-                    {sku.brand_name} · <span style={{ color: 'var(--text-muted)' }}>{sku.category}</span>
-                  </td>
-                  <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 700, color: 'var(--accent-emerald)' }}>
-                    ₹{Math.round(sku.annual_consumption_value).toLocaleString()}
-                  </td>
-                  <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--text-primary)' }}>
-                    {sku.mean_daily_demand.toLocaleString()} / day
-                  </td>
-                  <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--text-secondary)' }}>
-                    {sku.std_daily_demand} <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>({sku.cv2})</span>
-                  </td>
-                  <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--accent-cyan)' }}>
-                    ₹{sku.unit_cost.toLocaleString()}
-                  </td>
-                  <td style={{ padding: '0.75rem', textAlign: 'center' }}>
-                    <span
-                      style={{
-                        padding: '0.2rem 0.55rem',
-                        borderRadius: '4px',
-                        fontSize: '0.72rem',
-                        fontWeight: 600,
-                        backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                        color: 'var(--text-secondary)'
-                      }}
-                    >
-                      {drilldownData?.policy?.reorder_automation || 'AUTOMATED'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {displayedSkus.map((sku) => {
+                const isGradeA = sku.abc_class === 'A';
+                const isGradeB = sku.abc_class === 'B';
+
+                return (
+                  <tr
+                    key={sku.product_id}
+                    style={{
+                      borderBottom: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <td style={{ padding: '0.75rem', fontWeight: 600, color: 'var(--accent-primary)', whiteSpace: 'nowrap' }}>
+                      #{sku.product_id}
+                    </td>
+                    <td style={{ padding: '0.75rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                      {sku.product_name}
+                    </td>
+                    <td style={{ padding: '0.75rem', whiteSpace: 'nowrap' }}>
+                      {isGradeA ? (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                            color: '#34d399',
+                            border: '1px solid rgba(16, 185, 129, 0.3)',
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '6px',
+                            fontWeight: 700,
+                            fontSize: '0.76rem'
+                          }}
+                        >
+                          🟢 Grade A (Top Earner) · Cell {sku.cell}
+                        </span>
+                      ) : isGradeB ? (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                            color: '#60a5fa',
+                            border: '1px solid rgba(59, 130, 246, 0.3)',
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '6px',
+                            fontWeight: 700,
+                            fontSize: '0.76rem'
+                          }}
+                        >
+                          🔵 Grade B (Steady Mid) · Cell {sku.cell}
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: 'rgba(245, 158, 11, 0.15)',
+                            color: '#fbbf24',
+                            border: '1px solid rgba(245, 158, 11, 0.3)',
+                            padding: '0.2rem 0.55rem',
+                            borderRadius: '6px',
+                            fontWeight: 700,
+                            fontSize: '0.76rem'
+                          }}
+                        >
+                          ⚪ Grade C (Low Volume) · Cell {sku.cell}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.75rem', color: 'var(--text-secondary)' }}>
+                      {sku.brand_name} · <span style={{ color: 'var(--text-muted)' }}>{sku.category}</span>
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 700, color: 'var(--accent-emerald)', whiteSpace: 'nowrap' }}>
+                      ₹{Math.round(sku.annual_consumption_value).toLocaleString()}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      {sku.mean_daily_demand.toLocaleString()} / day
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          backgroundColor: Number(sku.cv2) < 0.25 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                          color: Number(sku.cv2) < 0.25 ? '#10b981' : '#f59e0b',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {Number(sku.cv2) < 0.25 ? 'Steady (Daily)' : Number(sku.cv2) < 1.0 ? 'Variable' : 'Irregular'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--accent-cyan)', whiteSpace: 'nowrap' }}>
+                      ₹{sku.unit_cost.toLocaleString()}
+                    </td>
+                    <td style={{ padding: '0.75rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <span
+                        style={{
+                          padding: '0.2rem 0.55rem',
+                          borderRadius: '4px',
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                          color: 'var(--text-secondary)'
+                        }}
+                      >
+                        {sku.policy?.reorder_automation || drilldownData?.policy?.reorder_automation || 'AUTOMATED'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
-          {filteredSkus.length === 0 && !drilldownLoading && (
+          {displayedSkus.length === 0 && !drilldownLoading && (
             <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              No SKUs found in Cell {selectedCell} matching the search.
+              No products found matching the current filter.
             </div>
           )}
         </div>

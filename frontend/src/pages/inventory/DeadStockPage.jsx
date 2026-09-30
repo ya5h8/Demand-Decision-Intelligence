@@ -18,6 +18,7 @@ import {
   Info
 } from 'lucide-react';
 import api from '../../services/api';
+import { getProductName } from '../../utils/productNames';
 
 const ACTION_COLORS = {
   MARKDOWN: { bg: 'rgba(245, 158, 11, 0.15)', text: '#fbbf24', border: 'rgba(245, 158, 11, 0.3)' },
@@ -333,8 +334,8 @@ export default function DeadStockPage() {
                     }}
                   >
                     <td style={{ padding: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      <div>#{sku.product_id}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>{sku.product_name}</div>
+                      <div>{getProductName(sku.product_id, sku.product_name)}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontWeight: 400 }}>SKU: {sku.product_id}</div>
                     </td>
                     <td style={{ padding: '0.75rem', color: 'var(--text-secondary)' }}>
                       {sku.city_name}
@@ -432,7 +433,7 @@ export default function DeadStockPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Flame size={20} color="#f87171" />
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                  Clearance Action: SKU #{activeModalItem.product_id}
+                  Clearance Action: {getProductName(activeModalItem.product_id, activeModalItem.product_name)} (SKU: {activeModalItem.product_id})
                 </h3>
               </div>
               <button

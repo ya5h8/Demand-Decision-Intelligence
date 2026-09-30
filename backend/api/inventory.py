@@ -211,6 +211,19 @@ def get_inventory_recommendations(
     if db_recs:
         res_list = []
         for r in db_recs:
+            # Compute p_stockout from stock vs reorder point ratio
+            rop = r.reorder_point if r.reorder_point and r.reorder_point > 0 else 1.0
+            cur = r.current_stock if r.current_stock else 0.0
+            # Ratio: 0 stock = 1.0 risk, 2x ROP = 0.0 risk
+            ratio = max(0.0, min(1.0, 1.0 - (cur / (rop * 2.0))))
+            # Enforce minimum thresholds based on risk_status
+            risk = (r.risk_status or "").upper()
+            if risk in ("CRITICAL", "REORDER_NOW"):
+                ratio = max(ratio, 0.85)
+            elif risk in ("REORDER_RECOMMENDED", "LOW_STOCK"):
+                ratio = max(ratio, 0.60)
+            p_stockout = round(ratio, 3)
+
             res_list.append({
                 "id": r.id,
                 "product_id": r.product_id,
@@ -228,6 +241,7 @@ def get_inventory_recommendations(
                 "recommended_order_qty": r.recommended_order_qty,
                 "risk_status": r.risk_status,
                 "priority": r.priority,
+                "p_stockout": p_stockout,
             })
         return {
             "status": "success",

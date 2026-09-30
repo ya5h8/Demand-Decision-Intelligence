@@ -31,6 +31,7 @@ import {
   StatusBadge,
   EmptyState,
 } from '../../components/ui';
+import { getProductName } from '../../utils/productNames';
 
 const Z_SCORES = {
   0.90: 1.282,
@@ -167,7 +168,9 @@ export default function InventoryPage() {
     return processedData
       .filter((row) => {
         if (!searchSKU) return true;
-        return String(row.product_id).includes(searchSKU.trim());
+        const q = searchSKU.trim().toLowerCase();
+        const pName = getProductName(row.product_id, row.product_name).toLowerCase();
+        return String(row.product_id).toLowerCase().includes(q) || pName.includes(q);
       })
       .sort((a, b) => {
         let valA = a[sortField];
@@ -183,7 +186,9 @@ export default function InventoryPage() {
   const filteredSimulation = useMemo(() => {
     return simulationData.filter((row) => {
       if (!searchSKU) return true;
-      return String(row.product_id).includes(searchSKU.trim());
+      const q = searchSKU.trim().toLowerCase();
+      const pName = getProductName(row.product_id, row.product_name).toLowerCase();
+      return String(row.product_id).toLowerCase().includes(q) || pName.includes(q);
     });
   }, [simulationData, searchSKU]);
 
@@ -400,7 +405,7 @@ export default function InventoryPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-surface-subtle)' }}>
-                    <SortHeader field="product_id" label="Product ID" />
+                    <SortHeader field="product_id" label="Product Name / SKU" />
                     <SortHeader field="city_name" label="City" />
                     <SortHeader field="mean_daily_demand" label="Daily Demand" align="right" />
                     <SortHeader field="calculated_ss" label="Safety Stock" align="right" />
@@ -430,9 +435,14 @@ export default function InventoryPage() {
                           onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                         >
                           <td style={tdStyle}>
-                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                              #{row.product_id}
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                {getProductName(row.product_id, row.product_name)}
+                              </span>
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                                Code: {row.product_id}
+                              </span>
+                            </div>
                           </td>
                           <td style={tdStyle}>{row.city_name}</td>
                           <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -546,8 +556,8 @@ export default function InventoryPage() {
                       row.stockout_risk === 'CRITICAL_STOCKOUT'
                         ? 'critical'
                         : row.stockout_risk === 'REORDER_RECOMMENDED'
-                        ? 'warning'
-                        : 'success';
+                          ? 'warning'
+                          : 'success';
 
                     return (
                       <tr
@@ -558,8 +568,12 @@ export default function InventoryPage() {
                           {row.snapshot_date}
                         </td>
                         <td style={tdStyle}>
-                          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>#{row.product_id}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{row.city_name}</div>
+                          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {getProductName(row.product_id, row.product_name)}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                            Code: {row.product_id} • {row.city_name}
+                          </div>
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-muted)' }}>
                           {Math.round(row.opening_stock).toLocaleString('en-IN')}

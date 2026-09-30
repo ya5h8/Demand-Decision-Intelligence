@@ -16,7 +16,7 @@ import { useNavigate } from 'react-router-dom';
 
 export default function StoreDailyBriefing() {
   const navigate = useNavigate();
-  const [language, setLanguage] = useState('hinglish'); // 'hinglish' | 'hindi' | 'english'
+  const [language, setLanguage] = useState('english'); // Default to clean English
   const [isPlaying, setIsPlaying] = useState(false);
   const [briefingData, setBriefingData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -194,7 +194,7 @@ export default function StoreDailyBriefing() {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#1e1b4b' }}>
-                Dukaan Daily Audio Briefing
+                Store Daily Executive Briefing
               </h3>
               <span
                 style={{
@@ -213,7 +213,7 @@ export default function StoreDailyBriefing() {
               </span>
             </div>
             <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#475569' }}>
-              Non-tech store report — suniye ya padhiye aam bolchal ki bhasha me.
+              Executive business report — listen or read your daily operational brief.
             </p>
           </div>
         </div>
@@ -296,12 +296,12 @@ export default function StoreDailyBriefing() {
               {isPlaying ? (
                 <>
                   <Square size={14} />
-                  <span>Rukiye (Stop Audio)</span>
+                  <span>Stop Audio</span>
                 </>
               ) : (
                 <>
                   <Play size={14} />
-                  <span>Suniye (Play Briefing)</span>
+                  <span>Listen (Play Briefing)</span>
                 </>
               )}
             </button>
@@ -443,7 +443,7 @@ export default function StoreDailyBriefing() {
                 Supplier Reorder List (WhatsApp)
               </div>
               <div style={{ fontSize: '11px', color: '#047857' }}>
-                {briefingData?.critical_count || 0} items ka ready message bhejo
+                Instant message ready for {briefingData?.critical_count || 0} critical item(s)
               </div>
             </div>
             <button
@@ -464,7 +464,7 @@ export default function StoreDailyBriefing() {
               }}
             >
               <Share2 size={12} />
-              <span>WhatsApp par bhejo</span>
+              <span>Send via WhatsApp</span>
             </button>
           </div>
 
@@ -482,10 +482,10 @@ export default function StoreDailyBriefing() {
           >
             <div>
               <div style={{ fontSize: '13px', fontWeight: 700, color: '#92400e' }}>
-                Naya Stock / Purchase Planning
+                Stock & Purchase Planning
               </div>
               <div style={{ fontSize: '11px', color: '#b45309' }}>
-                September ke reorder levels check karein
+                Review inventory buffers and reorder thresholds
               </div>
             </div>
             <button
@@ -504,7 +504,7 @@ export default function StoreDailyBriefing() {
                 cursor: 'pointer',
               }}
             >
-              <span>Stock dekhein</span>
+              <span>View Stock Plan</span>
               <ArrowRight size={12} />
             </button>
           </div>
