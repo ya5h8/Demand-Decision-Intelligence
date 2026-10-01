@@ -9,6 +9,7 @@ Endpoints:
   GET /api/analytics/summary     - Returns summary KPI metrics for detected anomalies
   GET /api/analytics/trends      - Week-over-week (WoW) & Month-over-month (MoM) trends & category breakdowns
   GET /api/analytics/pricing     - Discount vs volume correlations and category price elasticities
+  POST /api/analytics/run-detection - Trigger Phase-4 SBC-aware anomaly detection pipeline
 """
 
 import json
@@ -350,3 +351,65 @@ def get_pricing_intelligence(db: Session = Depends(get_db)):
         ],
         "summary": "Price elasticity aggregated across active catalog categories."
     }
+
+
+
+
+# ---------------------------------------------------------------------------
+# Phase-4 CSV record formatter  (used by /anomalies and test suite)
+# ---------------------------------------------------------------------------
+
+def _format_csv_record(r: Dict) -> Dict[str, Any]:
+    """Format a CSV row into the Phase-4 extended schema."""
+    obs  = float(r.get("actual_demand", 0))
+    exp  = float(r.get("expected_demand", 0))
+    date_val = r.get("date_", "")
+    if hasattr(date_val, "strftime"):
+        date_val = date_val.strftime("%Y-%m-%d")
+    return {
+        "anomaly_id":          str(r.get("anomaly_id", "")),
+        "date_":               str(date_val),
+        "product_id":          str(r.get("product_id", "")),
+        "city_name":           str(r.get("city_name", "")),
+        "metric":              "demand_quantity",
+        "actual_demand":       round(obs, 2),
+        "expected_demand":     round(exp, 2),
+        "observed_value":      round(obs, 2),
+        "expected_value":      round(exp, 2),
+        "deviation":           round(obs - exp, 2),
+        "anomaly_score":       round(float(r.get("anomaly_score", 0)), 4),
+        "anomaly_type":        str(r.get("anomaly_type", "")),
+        "severity":            str(r.get("severity", "")),
+        "confidence":          round(float(r.get("confidence", 0)), 4) if r.get("confidence") != "" else None,
+        "detection_method":    str(r.get("detection_method", "")),
+        "sbc_class":           str(r.get("sbc_class", "")),
+        "explanation":         str(r.get("explanation", "")),
+        "action_recommendation": str(r.get("action_recommendation", "")),
+        "status":              "OPEN",
+    }
+# ---------------------------------------------------------------------------
+# POST /run-detection  (Phase-4 anomaly detection pipeline trigger)
+# ---------------------------------------------------------------------------
+
+import logging as _logging
+_logger = _logging.getLogger("ddi.analytics")
+
+
+@router.post(
+    "/run-detection",
+    summary="Trigger Demand Anomaly Detection Pipeline",
+    response_description="Returns execution status, detected anomaly count, and breakdown.",
+)
+def trigger_anomaly_detection() -> Dict[str, Any]:
+    """Runs the Phase-4 SBC-aware Anomaly Detection Engine and regenerates demand_anomalies.csv."""
+    try:
+        from backend.services.anomaly_service import run_detection
+        stats = run_detection()
+        return {
+            "status": "success",
+            "message": "Anomaly detection pipeline executed successfully.",
+            "stats": stats,
+        }
+    except Exception as e:
+        _logger.exception("Error executing anomaly detection pipeline")
+        raise HTTPException(status_code=500, detail=str(e))
