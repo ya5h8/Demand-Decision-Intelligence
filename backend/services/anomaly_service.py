@@ -1,277 +1,182 @@
-"""
-Classifier-Aware Anomaly Detection Service for Intermittent & Continuous Demand
-Project: Demand-Decision-Intelligence
+﻿"""
+Anomaly Service
+backend/services/anomaly_service.py
+
+Thin service layer wrapping the DemandAnomalyDetector engine.
+Provides:
+  - run_detection()          : run the full pipeline
+  - load_anomalies_df()      : load the output CSV into a filtered DataFrame
+  - get_summary_stats()      : aggregate KPI stats from the CSV
 """
 
-import math
-from datetime import date, datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional, Tuple
-import numpy as np
+import logging
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+
 import pandas as pd
-from scipy import stats
-from sqlalchemy.orm import Session
+import numpy as np
 
-from backend.models.demand import DailyProductDemand
-from backend.models.anomaly import AnomalyAlert
-from backend.models.dataset import Dataset
+logger = logging.getLogger("AnomalyService")
 
+PROJECT_ROOT  = Path(__file__).resolve().parent.parent.parent
+ANOMALY_CSV   = PROJECT_ROOT / "reports" / "demand_anomalies.csv"
+FORECAST_CSV  = PROJECT_ROOT / "reports" / "forecast_results.csv"
+SKU_CLASS_CSV = PROJECT_ROOT / "reports" / "sku_demand_classification.csv"
 
-def classify_sbc(quantities: np.ndarray) -> str:
-    """
-    Syntetos-Boylan-Croston (SBC) Demand Categorization:
-    Computes:
-    - ADI (Average Demand Interval): total periods / count of non-zero demand periods
-    - CV^2 (Squared Coefficient of Variation of non-zero demand): (std / mean)^2
-
-    Cutoffs:
-        ADI = 1.32, CV^2 = 0.49
-    Categories:
-        ADI < 1.32 and CV^2 < 0.49  -> SMOOTH
-        ADI >= 1.32 and CV^2 < 0.49 -> INTERMITTENT
-        ADI < 1.32 and CV^2 >= 0.49 -> ERRATIC
-        ADI >= 1.32 and CV^2 >= 0.49 -> LUMPY
-    """
-    if len(quantities) == 0:
-        return "SMOOTH"
-
-    non_zero = quantities[quantities > 0]
-    if len(non_zero) == 0:
-        return "INTERMITTENT"
-
-    adi = len(quantities) / len(non_zero)
-    mean_nz = float(np.mean(non_zero))
-    std_nz = float(np.std(non_zero, ddof=1)) if len(non_zero) > 1 else 0.0
-    cv2 = ((std_nz / mean_nz) ** 2) if mean_nz > 0 else 0.0
-
-    if adi < 1.32 and cv2 < 0.49:
-        return "SMOOTH"
-    elif adi >= 1.32 and cv2 < 0.49:
-        return "INTERMITTENT"
-    elif adi < 1.32 and cv2 >= 0.49:
-        return "ERRATIC"
-    else:
-        return "LUMPY"
+# Required columns guaranteed by the Phase-4 engine
+REQUIRED_COLS = [
+    "anomaly_id","date_","product_id","city_name",
+    "actual_demand","expected_demand","anomaly_score",
+    "anomaly_type","severity","confidence","detection_method",
+    "sbc_class","explanation","action_recommendation",
+    "modified_z_score","z_score","residual","rolling_volatility",
+]
 
 
-def compute_modified_z_score(x: float, median_val: float, mad_val: float) -> float:
-    """
-    Computes robust Modified Z-Score using median and MAD:
-        Modified Z = 0.6745 * (x - median) / MAD
-    Floors MAD at max(MAD, 1.0, 0.1 * median) to strictly prevent division-by-zero or explosion.
-    """
-    safe_mad = max(float(mad_val), 1.0, 0.1 * max(0.0, float(median_val)))
-    return 0.6745 * (float(x) - float(median_val)) / safe_mad
-
-
-def fit_count_model_p99(non_zero_values: np.ndarray) -> float:
-    """
-    Fits Negative Binomial (or Poisson if variance <= 1.5 * mean) to non-zero demand sizes
-    and returns the 99th percentile threshold.
-    """
-    if len(non_zero_values) == 0:
-        return 0.0
-
-    mean_v = float(np.mean(non_zero_values))
-    var_v = float(np.var(non_zero_values, ddof=1)) if len(non_zero_values) > 1 else 0.0
-
-    # If variance <= 1.5 * mean or underdispersed: Poisson
-    if var_v <= 1.5 * mean_v or var_v <= mean_v:
-        # Poisson distribution with lambda = mean_v
-        p99 = stats.poisson.ppf(0.99, max(0.1, mean_v))
-        return float(max(p99, mean_v))
-
-    # Overdispersed: Negative Binomial using method of moments
-    # mean = r*(1-p)/p, variance = r*(1-p)/p^2 -> p = mean / variance, r = mean^2 / (variance - mean)
-    p = mean_v / var_v
-    p = max(0.001, min(0.999, p))
-    r = (mean_v ** 2) / max(0.001, var_v - mean_v)
-    r = max(0.1, r)
-
-    p99 = stats.nbinom.ppf(0.99, r, p)
-    return float(max(p99, mean_v))
-
-
-def detect_interarrival_silence(dates: List[date], quantities: np.ndarray) -> Optional[Dict[str, Any]]:
-    """
-    Tracks inter-arrival intervals (days between non-zero sales).
-    Flags 'unexpected silence' (STOCKOUT_SUSPECTED) if the trailing zero streak
-    exceeds the 99th percentile of historical inter-arrival gaps.
-    """
-    if len(quantities) < 30:
-        return None
-
-    non_zero_indices = [i for i, q in enumerate(quantities) if q > 0]
-    if len(non_zero_indices) < 2:
-        return None
-
-    # Calculate historical gaps in days between non-zero events
-    gaps = []
-    for j in range(1, len(non_zero_indices)):
-        gap = non_zero_indices[j] - non_zero_indices[j - 1]
-        gaps.append(gap)
-
-    if not gaps:
-        return None
-
-    gap_p99 = float(np.percentile(gaps, 99))
-    gap_threshold = max(gap_p99, 7.0)  # At least 7 consecutive zero days
-
-    # Trailing streak of zero days at the end of the series
-    trailing_zeros = len(quantities) - 1 - non_zero_indices[-1]
-    if trailing_zeros > gap_threshold:
-        return {
-            "anomaly_type": "STOCKOUT_SUSPECTED",
-            "detection_method": "INTERARRIVAL_GAP_SILENCE",
-            "confidence": "HIGH",
-            "severity": "CRITICAL",
-            "gap_days": trailing_zeros,
-            "threshold_days": round(gap_threshold, 1),
-            "last_active_date": dates[non_zero_indices[-1]].isoformat(),
-            "description": (
-                f"Unexpected silence: {trailing_zeros} consecutive days with zero demand "
-                f"exceeds historical 99th percentile interval ({round(gap_threshold, 1)} days). "
-                f"Stockout suspected."
-            ),
-        }
-    return None
-
-
-def detect_anomalies_for_series(
-    product_id: str,
-    city_name: str,
-    dates: List[date],
-    quantities: List[float],
-    min_observations: int = 30
+def run_detection(
+    forecast_path: Optional[Path] = None,
+    sku_class_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """
-    Classifier-aware anomaly detection pipeline:
-    1. Suppresses anomalies if observations < min_observations, labeling INSUFFICIENT_HISTORY.
-    2. Routes by SBC classification (SMOOTH, ERRATIC, INTERMITTENT, LUMPY).
-    3. SMOOTH/ERRATIC: Modified Z-score with median & MAD floored to prevent division-by-zero.
-    4. INTERMITTENT/LUMPY: Count model (Negative Binomial / Poisson) on non-zero sizes + unexpected silence detection.
+    Execute the full anomaly detection pipeline and return stats.
+    Imports engine lazily to avoid circular import at startup.
     """
-    n_obs = len(quantities)
-    q_arr = np.array(quantities, dtype=float)
+    from analytics.anomaly_detection_engine import DemandAnomalyDetector
+    detector = DemandAnomalyDetector()
+    stats = detector.run_pipeline(
+        forecast_path=forecast_path,
+        sku_class_path=sku_class_path,
+    )
+    return stats
 
-    if n_obs < min_observations:
-        return {
-            "product_id": str(product_id),
-            "city_name": city_name,
-            "sbc_class": "UNKNOWN",
-            "status": "INSUFFICIENT_HISTORY",
-            "confidence": "INSUFFICIENT_HISTORY",
-            "observations_count": n_obs,
-            "anomalies": [],
-            "message": f"Insufficient history: SKU has {n_obs} observations (minimum {min_observations} required). Alerts suppressed.",
-        }
 
-    sbc_class = classify_sbc(q_arr)
-    detected_anomalies = []
+def load_anomalies_df(
+    anomaly_csv: Optional[Path] = None,
+    severity: Optional[str] = None,
+    city_name: Optional[str] = None,
+    product_id: Optional[str] = None,
+    anomaly_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 500,
+) -> pd.DataFrame:
+    """
+    Load and filter the anomalies CSV.
 
-    if sbc_class in ("SMOOTH", "ERRATIC"):
-        # Modified Z-score with median and MAD over 14-day rolling window
-        rolling_window = 14
-        for idx in range(rolling_window, n_obs):
-            window = q_arr[idx - rolling_window:idx]
-            current_x = q_arr[idx]
-            current_date = dates[idx]
+    Args:
+        anomaly_csv:  Override path to the anomaly CSV.
+        severity:     Filter by severity. "ALL" or None = no filter.
+        city_name:    Filter by city (case-insensitive). "ALL" = no filter.
+        product_id:   Filter by product_id string.
+        anomaly_type: Filter by anomaly type string. "ALL" = no filter.
+        start_date:   ISO date string (inclusive lower bound on date_).
+        end_date:     ISO date string (inclusive upper bound on date_).
+        limit:        Maximum rows returned.
 
-            med = float(np.median(window))
-            mad = float(np.median(np.abs(window - med)))
-            mod_z = compute_modified_z_score(current_x, med, mad)
+    Returns:
+        Filtered pandas DataFrame (never raises on empty — returns empty DF).
+    """
+    csv_path = anomaly_csv or ANOMALY_CSV
+    if not csv_path.exists():
+        logger.warning(f"Anomaly CSV not found at {csv_path}. Returning empty DataFrame.")
+        return pd.DataFrame(columns=REQUIRED_COLS)
 
-            if mod_z > 2.5:
-                detected_anomalies.append({
-                    "date_": current_date.isoformat(),
-                    "product_id": str(product_id),
-                    "city_name": city_name,
-                    "anomaly_type": "SPIKE",
-                    "detection_method": "MODIFIED_Z_MAD",
-                    "confidence": "HIGH",
-                    "severity": "CRITICAL" if mod_z >= 4.0 else "MEDIUM",
-                    "actual_value": float(current_x),
-                    "expected_value": round(med, 2),
-                    "score": round(min(1.0, abs(mod_z) / 5.0), 4),
-                    "description": f"Demand surge: observed {current_x} exceeds rolling median {round(med, 2)} (Modified Z = {round(mod_z, 2)})",
-                })
-            elif mod_z < -2.5 and med > 5.0:
-                detected_anomalies.append({
-                    "date_": current_date.isoformat(),
-                    "product_id": str(product_id),
-                    "city_name": city_name,
-                    "anomaly_type": "DROP",
-                    "detection_method": "MODIFIED_Z_MAD",
-                    "confidence": "HIGH",
-                    "severity": "CRITICAL" if mod_z <= -4.0 else "MEDIUM",
-                    "actual_value": float(current_x),
-                    "expected_value": round(med, 2),
-                    "score": round(min(1.0, abs(mod_z) / 5.0), 4),
-                    "description": f"Demand drop: observed {current_x} fell significantly below rolling median {round(med, 2)} (Modified Z = {round(mod_z, 2)})",
-                })
+    try:
+        df = pd.read_csv(csv_path, low_memory=False)
+    except Exception as exc:
+        logger.error(f"Failed to read anomaly CSV: {exc}")
+        return pd.DataFrame(columns=REQUIRED_COLS)
 
-    else:
-        # INTERMITTENT or LUMPY -> Count Model, NO Z-scores!
-        non_zero = q_arr[q_arr > 0]
-        p99_threshold = fit_count_model_p99(non_zero)
+    if df.empty:
+        return df
 
-        # Flag spikes on non-zero days only if exceeding 99th percentile
-        for idx in range(n_obs):
-            current_x = q_arr[idx]
-            current_date = dates[idx]
-            if current_x > 0 and current_x > p99_threshold:
-                detected_anomalies.append({
-                    "date_": current_date.isoformat(),
-                    "product_id": str(product_id),
-                    "city_name": city_name,
-                    "anomaly_type": "SPIKE",
-                    "detection_method": "COUNT_MODEL_NEGBINOMIAL",
-                    "confidence": "HIGH",
-                    "severity": "CRITICAL" if current_x > (p99_threshold * 1.5) else "MEDIUM",
-                    "actual_value": float(current_x),
-                    "expected_value": round(float(np.mean(non_zero)), 2),
-                    "score": round(min(1.0, current_x / (p99_threshold + 1.0)), 4),
-                    "description": f"Intermittent demand spike: {current_x} exceeds 99th percentile fitted count threshold ({round(p99_threshold, 2)})",
-                })
+    # Ensure all required cols exist (backward compat with legacy CSV)
+    for col in REQUIRED_COLS:
+        if col not in df.columns:
+            df[col] = ""
 
-        # Check for unexpected silence (stockout suspected)
-        silence_alert = detect_interarrival_silence(dates, q_arr)
-        if silence_alert:
-            detected_anomalies.append({
-                "date_": dates[-1].isoformat(),
-                "product_id": str(product_id),
-                "city_name": city_name,
-                "anomaly_type": silence_alert["anomaly_type"],
-                "detection_method": silence_alert["detection_method"],
-                "confidence": silence_alert["confidence"],
-                "severity": silence_alert["severity"],
-                "actual_value": 0.0,
-                "expected_value": round(float(np.mean(non_zero)), 2),
-                "score": 0.95,
-                "description": silence_alert["description"],
-            })
+    # Parse date
+    df["date_"] = pd.to_datetime(df["date_"], errors="coerce")
 
-    # Check for dead stock (zero demand for the last 60+ consecutive days when history >= 90 days)
-    if n_obs >= 90 and np.all(q_arr[-60:] == 0):
-        detected_anomalies.append({
-            "date_": dates[-1].isoformat(),
-            "product_id": str(product_id),
-            "city_name": city_name,
-            "anomaly_type": "DEAD_STOCK",
-            "detection_method": "ZERO_DEMAND_PERSISTENCE",
-            "confidence": "HIGH",
-            "severity": "CRITICAL",
-            "actual_value": 0.0,
-            "expected_value": 0.0,
-            "score": 0.99,
-            "description": "Dead stock detected: zero demand recorded over the last 60 consecutive days.",
-        })
+    # --- filters ---
+    if severity and severity.upper() != "ALL":
+        df = df[df["severity"].str.upper() == severity.upper()]
+    if city_name and city_name.upper() != "ALL":
+        df = df[df["city_name"].str.lower() == city_name.strip().lower()]
+    if product_id:
+        df = df[df["product_id"].astype(str) == str(product_id).strip()]
+    if anomaly_type and anomaly_type.upper() != "ALL":
+        at = anomaly_type.strip().upper()
+        alias_map = {"SPIKE_DEMAND": "DEMAND_SPIKE", "DROP_STOCKOUT": "DEMAND_DROP"}
+        candidates = {at, alias_map.get(at, at)}
+        df = df[df["anomaly_type"].str.upper().isin(candidates)]
+    if start_date:
+        try:
+            df = df[df["date_"] >= pd.to_datetime(start_date)]
+        except Exception:
+            pass
+    if end_date:
+        try:
+            df = df[df["date_"] <= pd.to_datetime(end_date)]
+        except Exception:
+            pass
+
+    df = df.sort_values(["date_","anomaly_score"], ascending=[False, False])
+    return df.head(limit).reset_index(drop=True)
+
+
+def get_summary_stats(anomaly_csv: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Compute aggregate KPI statistics from the anomaly CSV.
+    Always returns a valid dict even if the CSV is missing or empty.
+    """
+    csv_path = anomaly_csv or ANOMALY_CSV
+    empty_resp: Dict[str, Any] = {
+        "source": "empty",
+        "total_anomalies": 0,
+        "severity_breakdown":    {"CRITICAL":0,"MEDIUM":0,"LOW":0},
+        "anomaly_type_breakdown":{
+            "DEMAND_SPIKE":0,"DEMAND_DROP":0,"RESIDUAL_ANOMALY":0,
+            "VOLATILITY_ANOMALY":0,"STOCKOUT_SUSPECTED":0,"DEAD_STOCK":0
+        },
+        "date_range": {"earliest_date": None, "latest_date": None},
+    }
+
+    if not csv_path.exists():
+        return empty_resp
+
+    try:
+        df = pd.read_csv(csv_path, low_memory=False)
+    except Exception:
+        return empty_resp
+
+    if df.empty:
+        return empty_resp
+
+    df["date_"] = pd.to_datetime(df["date_"], errors="coerce")
+    sev  = df["severity"].value_counts().to_dict() if "severity" in df else {}
+    typ  = df["anomaly_type"].value_counts().to_dict() if "anomaly_type" in df else {}
 
     return {
-        "product_id": str(product_id),
-        "city_name": city_name,
-        "sbc_class": sbc_class,
-        "status": "COMPLETED",
-        "confidence": "HIGH",
-        "observations_count": n_obs,
-        "anomalies": detected_anomalies,
+        "source": "csv",
+        "total_anomalies": len(df),
+        "severity_breakdown": {
+            "CRITICAL": int(sev.get("CRITICAL", 0)),
+            "MEDIUM":   int(sev.get("MEDIUM",   0)),
+            "LOW":      int(sev.get("LOW",       0)),
+        },
+        "anomaly_type_breakdown": {
+            "DEMAND_SPIKE":       int(typ.get("DEMAND_SPIKE",       0)),
+            "DEMAND_DROP":        int(typ.get("DEMAND_DROP",        0)),
+            "RESIDUAL_ANOMALY":   int(typ.get("RESIDUAL_ANOMALY",   0)),
+            "VOLATILITY_ANOMALY": int(typ.get("VOLATILITY_ANOMALY", 0)),
+            "STOCKOUT_SUSPECTED": int(typ.get("STOCKOUT_SUSPECTED", 0)),
+            "DEAD_STOCK":         int(typ.get("DEAD_STOCK",         0)),
+            "SPIKE_DEMAND":       int(typ.get("DEMAND_SPIKE",       0)),
+            "DROP_STOCKOUT":      int(typ.get("DEMAND_DROP",        0)),
+        },
+        "date_range": {
+            "earliest_date": str(df["date_"].min().date()) if not df["date_"].isna().all() else None,
+            "latest_date":   str(df["date_"].max().date()) if not df["date_"].isna().all() else None,
+        },
     }
